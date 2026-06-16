@@ -34,9 +34,9 @@ export class SupersetService {
   private readonly baseURL: string;
   private client: AxiosInstance;
 
-  private SALEMAN_ACCOUNT_SUPERSET: { username: string; password: string } = {
-    username: 'saleman',
-    password: 'saleman2@123',
+  private salemanAccountSuperset: { username: string; password: string } = {
+    username: '',
+    password: '',
   };
   private PHONE_NUMBER: string = '0909555888';
   private DATASETS_DASHBOARD: { table_name: string; id: number }[] = [
@@ -54,6 +54,11 @@ export class SupersetService {
     private readonly tokenCache: SupersetCacheService,
   ) {
     this.baseURL = this.configService.getOrThrow<string>('SUPERSET_BASE_URL');
+    this.salemanAccountSuperset = {
+      username: this.configService.getOrThrow('SUPERSET_SALEMAN_USERNAME'),
+      password: this.configService.getOrThrow('SUPERSET_SALEMAN_PASSWORD'),
+    }
+
     this.client = this.createClient();
   }
 
@@ -332,7 +337,7 @@ export class SupersetService {
    */
   async getGuestToken(payload: GetGuestTokenDto, res: any): Promise<void> {
     const { embeddedId } = payload;
-    const { username, password } = this.SALEMAN_ACCOUNT_SUPERSET;
+    const { username, password } = this.salemanAccountSuperset;
 
     // 1. Lấy access token từ Redis (có proactive refresh)
     const { accessToken } = await this.getAccessTokenCached(username, password);
