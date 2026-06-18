@@ -24,6 +24,8 @@ import {
   SupersetCacheService,
   SupersetTokenCache,
 } from './superset-cache.service';
+import { SupersetDashboardService } from '../superset-dashboard/superset-dashboard.service';
+import { FetchGuestTokenDto } from './dto/fetch-guest-token.dto';
 
 /** Page size used when paginating /security/users/ */
 const USERS_PAGE_SIZE = 100;
@@ -52,6 +54,7 @@ export class SupersetService {
   constructor(
     private readonly configService: ConfigService,
     private readonly tokenCache: SupersetCacheService,
+    private readonly dashboardService: SupersetDashboardService,
   ) {
     this.baseURL = this.configService.getOrThrow<string>('SUPERSET_BASE_URL');
     this.salemanAccountSuperset = {
@@ -73,6 +76,7 @@ export class SupersetService {
       }),
     );
     (client.defaults as any).jar = jar;
+    
     return client;
   }
 
@@ -184,8 +188,8 @@ export class SupersetService {
   }
 
   async fetchGuestToken(
-    payload: GetGuestTokenDto,
-    headers: CurrentUserPayload,
+    payload: FetchGuestTokenDto,
+    headers: { accessToken: string, csrfToken: string },
   ): Promise<string> {
     const body = {
       resources: [{ id: payload.embeddedId, type: 'dashboard' }],
@@ -334,37 +338,72 @@ export class SupersetService {
    *               → lưu access token mới vào Redis → issue guest token mới.
    *   Phút 15+:   access token cũ đã hết hạn, nhưng đã được refresh ở bước trên
    *               → không còn bị 401.
+    async getGuestToken(payload: GetGuestTokenDto, res: any): Promise<void> {
+      const { embeddedId } = payload;
+      const { username, password } = this.salemanAccountSuperset;
+
+      // 1. Lấy access token từ Redis (có proactive refresh)
+      const { accessToken } = await this.getAccessTokenCached(username, password);
+
+      // 2. Lấy CSRF token mới mỗi lần — cookie session không persist được
+      const { token: csrfToken } = await this.fetchCsrfToken(accessToken);
+
+      // 3. Issue guest token
+      const datasetIds = this.DATASETS_DASHBOARD.map((d) => d.id);
+
+      const guestToken = await this.fetchGuestToken(
+        {
+          username,
+          embeddedId,
+          rlsRules: datasetIds.map((d) => ({
+            clause: `hierarchy_phone IS NOT NULL AND hierarchy_phone @> ARRAY['${this.PHONE_NUMBER}']`,
+            dataset: d,
+          })),
+        },
+        { csrfToken, accessToken },
+      );
+
+      this.logger.log(
+        `[Superset] Guest token issued for user=${username} dashboard=${embeddedId}`,
+      );
+
+      res.send({ token: guestToken });
+    }
    */
-  async getGuestToken(payload: GetGuestTokenDto, res: any): Promise<void> {
-    const { embeddedId } = payload;
+  async getGuestToken(
+    payload: GetGuestTokenDto,
+    phone: string,
+  ): Promise<{ token: string }> {
+    // const { embeddedId } = payload;
+    const { path } = payload;
     const { username, password } = this.salemanAccountSuperset;
 
-    // 1. Lấy access token từ Redis (có proactive refresh)
+    // 1. get dashboard config từ DB
+    // const dashboard = await this.dashboardService.findByEmbeddedId(embeddedId);
+    const dashboard = await this.dashboardService.findByPath(path);
+
+    // 2. get access token
     const { accessToken } = await this.getAccessTokenCached(username, password);
 
-    // 2. Lấy CSRF token mới mỗi lần — cookie session không persist được
+    // 3. csrf
     const { token: csrfToken } = await this.fetchCsrfToken(accessToken);
 
-    // 3. Issue guest token
-    const datasetIds = this.DATASETS_DASHBOARD.map((d) => d.id);
+    // 4. inject RLS
+    const rlsRules = this.dashboardService.injectRls(dashboard?.rls, {
+      phone,
+    });
 
+    // 5. generate guest token
     const guestToken = await this.fetchGuestToken(
       {
         username,
-        embeddedId,
-        rlsRules: datasetIds.map((d) => ({
-          clause: `hierarchy_phone IS NOT NULL AND hierarchy_phone @> ARRAY['${this.PHONE_NUMBER}']`,
-          dataset: d,
-        })),
+        embeddedId: dashboard?.embeddedId,
+        rlsRules,
       },
       { csrfToken, accessToken },
     );
 
-    this.logger.log(
-      `[Superset] Guest token issued for user=${username} dashboard=${embeddedId}`,
-    );
-
-    res.send({ token: guestToken });
+    return { token: guestToken };
   }
 
   // ─── Admin token (dùng nội bộ bởi SyncService) ───────────────────────────

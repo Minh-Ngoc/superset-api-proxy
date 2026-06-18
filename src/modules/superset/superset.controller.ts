@@ -19,6 +19,8 @@ import {
 import { SupersetService } from './superset.service';
 import { SupersetLoginDto } from './dto/superset-login.dto';
 import { GetGuestTokenDto } from './dto/get-guest-token.dto';
+import { CurrentUser, type CurrentUserPayload } from 'src/common/decorators/current-user.decorator';
+import { JwtAuthGuard } from 'src/common/guards/jwt.guard';
 
 @ApiTags('Superset Auth')
 @Controller('superset')
@@ -40,7 +42,7 @@ export class SupersetController {
     return this.supersetService.login(dto);
   }
 
-  // @UseGuards(AuthGuard)
+  @UseGuards(JwtAuthGuard)
   @Post('guest-token')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -52,9 +54,8 @@ export class SupersetController {
   @ApiUnauthorizedResponse({ description: 'Sai credentials' })
   getGuestToken(
     @Body() dto: GetGuestTokenDto,
-    // @CurrentUser() headers: CurrentUserPayload,
-    @Res() res: any,
+    @CurrentUser() user: CurrentUserPayload,
   ) {
-    return this.supersetService.getGuestToken(dto, res);
+    return this.supersetService.getGuestToken(dto, user?.phone);
   }
 }

@@ -50,7 +50,7 @@ export class AccountService {
     return this.accountModel.find(query).lean().exec();
   }
 
-  async findByUsername(username: string): Promise<Account> {
+  async findByUsername(username: string): Promise<AccountDocument> {
     const account = await this.accountModel
       .findOne({ username: username.toLowerCase(), isActive: true })
       .lean()

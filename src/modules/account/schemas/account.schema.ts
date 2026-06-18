@@ -24,6 +24,14 @@ export class Account {
 
   /** Tên role, tham chiếu đến Role.name */
   @Prop({ type: String, required: true })
+  password!: string;
+
+  /** Tên role, tham chiếu đến Role.name */
+  @Prop({ type: String, required: true })
+  phone!: string;
+
+  /** Tên role, tham chiếu đến Role.name */
+  @Prop({ type: String, required: true })
   roleName!: string;
 
   @Prop({ type: Boolean, default: true })

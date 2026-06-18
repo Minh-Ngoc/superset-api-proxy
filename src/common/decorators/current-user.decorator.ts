@@ -1,19 +1,17 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
 
 export interface CurrentUserPayload {
-  accessToken: string;
-  csrfToken: string;
+  userId: string;
+  phone: string;
   // cookies: any;
 }
 
 export const CurrentUser = createParamDecorator(
   (_data: unknown, ctx: ExecutionContext): CurrentUserPayload => {
-    const request = ctx.switchToHttp().getRequest<CurrentUserPayload>();
+    const request = ctx.switchToHttp().getRequest<any>();
     return {
-      accessToken: request.accessToken,
-      csrfToken: request.csrfToken,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      // cookies: request.cookies,
+      userId: request?.user?.userId,
+      phone: request?.user?.phone,
     };
   },
 );

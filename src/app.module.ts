@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config/dist/config.service';
 import { RoleModule } from './modules/role/role.module';
 import { AccountModule } from './modules/account/account.module';
 import { RedisModule } from '@nestjs-modules/ioredis';
+import { AuthModule } from './modules/auth/auth.module';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { RedisModule } from '@nestjs-modules/ioredis';
     SupersetModule,
     RoleModule,
     AccountModule,
+    AuthModule,
   ],
   controllers: [],
   providers: [],
