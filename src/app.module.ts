@@ -6,6 +6,9 @@ import { ConfigService } from '@nestjs/config/dist/config.service';
 import { RoleModule } from './modules/role/role.module';
 import { AccountModule } from './modules/account/account.module';
 import { RedisModule } from '@nestjs-modules/ioredis';
+import { SupersetDashboardModule } from './modules/superset-dashboard/superset-dashboard.module';
+import { APP_GUARD } from '@nestjs/core';
+import { JwtAuthGuard } from './common/guards/jwt.guard';
 import { AuthModule } from './modules/auth/auth.module';
 
 @Module({
@@ -63,9 +66,15 @@ import { AuthModule } from './modules/auth/auth.module';
     SupersetModule,
     RoleModule,
     AccountModule,
+    SupersetDashboardModule,
     AuthModule,
   ],
   controllers: [],
-  providers: [],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+  ],
 })
 export class AppModule {}

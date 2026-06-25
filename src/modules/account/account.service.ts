@@ -11,6 +11,7 @@ import { Model } from 'mongoose';
 import { Account, AccountDocument } from './schemas/account.schema';
 import { CreateAccountDto } from './dto/create-account.dto';
 import { UpdateAccountDto } from './dto/update-account.dto';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class AccountService {
@@ -19,11 +20,53 @@ export class AccountService {
   constructor(
     @InjectModel(Account.name)
     private readonly accountModel: Model<AccountDocument>,
-  ) {}
+  ) { }
+
+  /*
+    async onModuleInit() {
+      const users = [
+        {
+          username: "admin",
+          password: "admin",
+          roleName: "Admin",
+          isActive: true,
+          phone: "0364083304"
+        },
+        {
+          username: "saleman",
+          password: "saleman",
+          roleName: "Saleman",
+          isActive: true,
+          phone: "0909555888"
+        },
+      ];
+
+      for (const u of users) {
+        await this.create(u);
+
+        this.logger.log(`[${AccountService.name}] Created user: ${u?.username}`)
+      }
+    }
+  */ 
 
   async create(dto: CreateAccountDto): Promise<Account> {
     try {
-      const account = new this.accountModel(dto);
+      const existingUser = await this.accountModel
+      .findOne({ username: dto?.username.toLowerCase(), isActive: true })
+      .lean()
+      .exec();
+
+      if (existingUser) {
+        throw new ConflictException('Username already exists');
+      }
+
+      const hashedPassword = await bcrypt.hash(dto?.password, 10);
+
+      const account = new this.accountModel({
+        ...dto,
+        password: hashedPassword,
+      });
+
       const saved = await account.save();
       this.logger.log(
         `Account created: ${saved.username} [role=${saved.roleName}]`,

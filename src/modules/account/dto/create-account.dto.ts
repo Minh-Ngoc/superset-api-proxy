@@ -8,16 +8,25 @@ import {
   MaxLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 
 export class CreateAccountDto {
   @ApiProperty({
     example: 'john.doe',
-    description: 'Username phải khớp với username trong Superset',
   })
   @IsString()
   @IsNotEmpty()
   @MaxLength(150)
+  @Transform(({ value }) => value?.toLowerCase())
   username!: string;
+
+  @ApiProperty({
+    example: '123123',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(150)
+  password!: string;
 
   @ApiProperty({
     example: 'analyst',

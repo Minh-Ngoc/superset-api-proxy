@@ -56,6 +56,7 @@ export class SupersetController {
     @Body() dto: GetGuestTokenDto,
     @CurrentUser() user: CurrentUserPayload,
   ) {
+    console.log('user: ', user)
     return this.supersetService.getGuestToken(dto, user?.phone);
   }
 }
