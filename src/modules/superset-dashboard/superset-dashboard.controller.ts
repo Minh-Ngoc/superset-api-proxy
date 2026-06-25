@@ -26,8 +26,8 @@ export class SupersetDashboardController {
   }
 
   @Get('embedded')
-  getEmbeddedDashboardByPath(@Query() query: GetEmbeddedIdByPathDto) {
-    return this.dashboardService.findByPath(query?.path);
+  getEmbeddedIdByPath(@Query() query: GetEmbeddedIdByPathDto) {
+    return this.dashboardService.getEmbeddedIdByPath(query?.path);
   }
 
   @Get()

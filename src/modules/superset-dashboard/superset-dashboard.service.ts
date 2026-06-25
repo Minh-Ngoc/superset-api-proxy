@@ -108,7 +108,7 @@ export class SupersetDashboardService {
         return dashboard;
     }
 
-    async getByPath(
+    async getEmbeddedIdByPath(
         path: string,
     ): Promise<{ embeddedId: string }> {
         const dashboard = await this.findByPath(path);
