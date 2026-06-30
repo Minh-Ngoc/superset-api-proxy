@@ -1,30 +1,40 @@
-import { Type } from "class-transformer";
-import { IsArray, IsBoolean, IsNotEmpty, IsOptional, IsString, Matches, ValidateNested } from "class-validator";
-import { RlsRuleDto } from "./rls-rule.dto";
+import {
+  IsArray,
+  IsBoolean,
+  IsMongoId,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+} from 'class-validator';
 
 export class CreateSupersetDashboardDto {
   @IsString()
   @IsNotEmpty()
   embeddedId!: string;
- 
+
   @IsString()
   @IsNotEmpty()
   name!: string;
- 
+
   @IsString()
   @IsNotEmpty()
   @Matches(/^\/(?!\/)(?!.*\/$)[a-zA-Z0-9\-_\/]*$/, {
     message:
-      'Path phải bắt đầu bằng "/", không chứa "//", không kết thúc bằng "/" và chỉ chứa chữ, số, -, _, /',
+      'Route phải bắt đầu bằng "/", không chứa "//", không kết thúc bằng "/" và chỉ chứa chữ, số, -, _, /',
   })
-  path!: string;
- 
+  route!: string;
+
+  @IsMongoId()
+  @IsNotEmpty()
+  applicationId!: string;
+
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
- 
+
+  @IsOptional()
   @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => RlsRuleDto)
-  rls!: RlsRuleDto[];
+  @IsMongoId({ each: true })
+  rlsTemplateIds?: string[];
 }

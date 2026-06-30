@@ -1,7 +1,15 @@
-import { IsNotEmpty, IsString } from "class-validator";
+import { IsMongoId, IsOptional, IsString } from 'class-validator';
 
 export class GetEmbeddedIdByPathDto {
-    @IsString()
-    @IsNotEmpty()
-    path!: string;
+  @IsOptional()
+  @IsString()
+  route?: string;
+
+  @IsOptional()
+  @IsString()
+  path?: string;
+
+  @IsOptional()
+  @IsMongoId()
+  applicationId?: string;
 }

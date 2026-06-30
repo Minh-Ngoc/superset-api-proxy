@@ -1,256 +1,267 @@
 import {
-    ConflictException,
-    Injectable,
-    Logger,
-    NotFoundException,
-    BadRequestException,
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import {
-    SupersetDashboard,
-    SupersetDashboardDocument,
-    RlsRule,
-} from './schemas/superset-dashboard.schema';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
+import { SupersetApplicationService } from '../superset-application/superset-application.service';
+import { RlsTemplate } from '../superset-rls-template/schemas/rls-template.schema';
+import { SupersetRlsTemplateService } from '../superset-rls-template/superset-rls-template.service';
 import { CreateSupersetDashboardDto } from './dto/create-dashboard.dto';
 import { UpdateSupersetDashboardDto } from './dto/update-dashboard.dto';
+import {
+  SupersetDashboard,
+  SupersetDashboardDocument,
+} from './schemas/superset-dashboard.schema';
 
 @Injectable()
 export class SupersetDashboardService {
-    private readonly logger = new Logger(SupersetDashboardService.name);
+  private readonly logger = new Logger(SupersetDashboardService.name);
 
-    constructor(
-        @InjectModel(SupersetDashboard.name)
-        private readonly dashboardModel: Model<SupersetDashboardDocument>,
-    ) { }
+  constructor(
+    @InjectModel(SupersetDashboard.name)
+    private readonly dashboardModel: Model<SupersetDashboardDocument>,
+    private readonly applicationService: SupersetApplicationService,
+    private readonly rlsTemplateService: SupersetRlsTemplateService,
+  ) {}
 
-    // ─────────────────────────────────────────────────────────────
-    // VALIDATION HELPERS
-    // ─────────────────────────────────────────────────────────────
-
-    private validateClause(clause: string, variables: string[]) {
-        const matches = clause.match(/\{\{(\w+)\}\}/g) || [];
-        const usedVars = matches.map((v) => v.replace(/[{}]/g, ''));
-
-        for (const v of usedVars) {
-            if (!variables.includes(v)) {
-                throw new BadRequestException(
-                    `Variable "${v}" chưa được khai báo trong variables[]`,
-                );
-            }
-        }
-
-        // basic SQL injection guard
-        const forbidden = /(drop|delete|insert|update|;)/i;
-        if (forbidden.test(clause)) {
-            throw new BadRequestException(`RLS clause không hợp lệ`);
-        }
+  private toObjectId(id: string): Types.ObjectId {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException(`ObjectId không hợp lệ: ${id}`);
     }
 
-    private validateRls(rules: RlsRule[]) {
-        const datasetSet = new Set<number>();
+    return new Types.ObjectId(id);
+  }
 
-        for (const rule of rules) {
-            if (datasetSet.has(rule.dataset)) {
-                throw new BadRequestException(
-                    `Dataset ${rule.dataset} bị duplicate trong RLS`,
-                );
-            }
-            datasetSet.add(rule.dataset);
+  private omitUndefined<T extends Record<string, unknown>>(
+    value: T,
+  ): Partial<T> {
+    return Object.fromEntries(
+      Object.entries(value).filter(([, entry]) => entry !== undefined),
+    ) as Partial<T>;
+  }
 
-            this.validateClause(rule.clause, rule.variables || []);
-        }
+  private async assertDashboardUnique(
+    dto: Pick<
+      CreateSupersetDashboardDto,
+      'embeddedId' | 'route' | 'applicationId'
+    >,
+    excludeId?: string,
+  ) {
+    const idFilter = excludeId
+      ? { _id: { $ne: this.toObjectId(excludeId) } }
+      : {};
+
+    const embeddedConflict = await this.dashboardModel.findOne({
+      embeddedId: dto.embeddedId,
+      applicationId: dto?.applicationId,
+      ...idFilter,
+    });
+
+    if (embeddedConflict) {
+      throw new ConflictException(
+        `Dashboard embeddedId="${dto.embeddedId}" đã tồn tại`,
+      );
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // CRUD
-    // ─────────────────────────────────────────────────────────────
+    const routeConflict = await this.dashboardModel.findOne({
+      applicationId: this.toObjectId(dto.applicationId),
+      route: dto.route,
+      ...idFilter,
+    });
 
-    async create(dto: CreateSupersetDashboardDto): Promise<SupersetDashboard> {
-        const existing = await this.dashboardModel.findOne({
-            embeddedId: dto.embeddedId,
-        });
+    if (routeConflict) {
+      throw new ConflictException(
+        `Dashboard route="${dto.route}" đã tồn tại trong application này`,
+      );
+    }
+  }
 
-        if (existing) {
-            throw new ConflictException(
-                `Dashboard embeddedId="${dto.embeddedId}" đã tồn tại`,
-            );
-        }
+  async create(dto: CreateSupersetDashboardDto): Promise<SupersetDashboard> {
+    await this.applicationService.assertActive(dto.applicationId);
+    await this.assertDashboardUnique(dto);
+    await this.rlsTemplateService.assertBelongToApplication(
+      dto.rlsTemplateIds,
+      dto.applicationId,
+    );
 
-        this.validateRls(dto.rls);
+    const created = await this.dashboardModel.create({
+      ...dto,
+      applicationId: this.toObjectId(dto.applicationId),
+      rlsTemplateIds: this.rlsTemplateService
+        .normalizeIds(dto.rlsTemplateIds)
+        .map((id) => this.toObjectId(id)),
+    });
 
-        const created = await this.dashboardModel.create({
-            ...dto,
-            rls: dto.rls.map((r) => ({
-                ...r,
-                clause: this.normalizeClause(r.clause),
-            })),
-        });
+    this.logger.log(`Created dashboard: ${dto.embeddedId}`);
+    return created.toObject();
+  }
 
-        this.logger.log(`Created dashboard: ${dto.embeddedId}`);
-        return created;
+  async findAll(applicationId?: string): Promise<SupersetDashboard[]> {
+    const filter = applicationId
+      ? { applicationId: this.toObjectId(applicationId) }
+      : {};
+
+    return this.dashboardModel.find(filter).sort({ createdAt: -1 }).lean();
+  }
+
+  async findOne(id: string): Promise<SupersetDashboard> {
+    const dashboard = await this.dashboardModel.findById(id).lean();
+
+    if (!dashboard) {
+      throw new NotFoundException(`Dashboard id=${id} không tồn tại`);
     }
 
-    async findAll(): Promise<SupersetDashboard[]> {
-        return this.dashboardModel
-            .find()
-            .sort({ createdAt: -1 })
-            .lean();
+    return dashboard;
+  }
+
+  async getEmbeddedIdByRoute(
+    route: string,
+    applicationId?: string,
+  ): Promise<{ embeddedId: string }> {
+    const dashboard = await this.findByRoute(route, applicationId);
+    return { embeddedId: dashboard.embeddedId };
+  }
+
+  async getEmbeddedIdByPath(path: string): Promise<{ embeddedId: string }> {
+    return this.getEmbeddedIdByRoute(path);
+  }
+
+  async findByRoute(
+    route: string,
+    applicationId?: string,
+  ): Promise<SupersetDashboard> {
+    const filter = {
+      route,
+      isActive: true,
+      ...(applicationId
+        ? { applicationId: this.toObjectId(applicationId) }
+        : {}),
+    };
+
+    const dashboard = await this.dashboardModel.findOne(filter).lean();
+
+    if (!dashboard) {
+      throw new NotFoundException(
+        `Dashboard route="${route}" không tồn tại hoặc inactive`,
+      );
     }
 
-    async findOne(id: string): Promise<SupersetDashboard> {
-        const dashboard = await this.dashboardModel.findById(id).lean();
+    return dashboard;
+  }
 
-        if (!dashboard) {
-            throw new NotFoundException(`Dashboard id=${id} không tồn tại`);
-        }
+  async findByPath(path: string): Promise<SupersetDashboard> {
+    return this.findByRoute(path);
+  }
 
-        return dashboard;
+  async findByEmbeddedId(embeddedId: string): Promise<SupersetDashboard> {
+    const dashboard = await this.dashboardModel
+      .findOne({ embeddedId, isActive: true })
+      .lean();
+
+    if (!dashboard) {
+      throw new NotFoundException(
+        `Dashboard embeddedId="${embeddedId}" không tồn tại hoặc inactive`,
+      );
     }
 
-    async getEmbeddedIdByPath(
-        path: string,
-    ): Promise<{ embeddedId: string }> {
-        const dashboard = await this.findByPath(path);
+    return dashboard;
+  }
 
-        return { embeddedId: dashboard?.embeddedId }
+  async update(
+    id: string,
+    dto: UpdateSupersetDashboardDto,
+  ): Promise<SupersetDashboard> {
+    const current = await this.dashboardModel.findById(id).lean();
+    if (!current) {
+      throw new NotFoundException(`Dashboard id=${id} không tồn tại`);
     }
 
-    async findByPath(
-        path: string,
-    ): Promise<SupersetDashboard> {
-        const dashboard = await this.dashboardModel
-            .findOne({ path, isActive: true })
-            .lean();
+    const applicationId = dto.applicationId ?? current.applicationId.toString();
 
-        if (!dashboard) {
-            throw new NotFoundException(
-                `Dashboard path="${path}" không tồn tại hoặc inactive`,
-            );
-        }
-
-        return dashboard;
+    if (dto.applicationId) {
+      await this.applicationService.assertActive(dto.applicationId);
     }
 
-    async findByEmbeddedId(
-        embeddedId: string,
-    ): Promise<SupersetDashboard> {
-        const dashboard = await this.dashboardModel
-            .findOne({ embeddedId, isActive: true })
-            .lean();
+    await this.assertDashboardUnique(
+      {
+        embeddedId: dto.embeddedId ?? current.embeddedId,
+        route: dto.route ?? current.route,
+        applicationId,
+      },
+      id,
+    );
 
-        if (!dashboard) {
-            throw new NotFoundException(
-                `Dashboard embeddedId="${embeddedId}" không tồn tại hoặc inactive`,
-            );
-        }
-
-        return dashboard;
+    if (dto.rlsTemplateIds) {
+      await this.rlsTemplateService.assertBelongToApplication(
+        dto.rlsTemplateIds,
+        applicationId,
+      );
     }
 
-    async update(
-        id: string,
-        dto: UpdateSupersetDashboardDto,
-    ): Promise<SupersetDashboard> {
-        if (dto.embeddedId) {
-            const conflict = await this.dashboardModel.findOne({
-                embeddedId: dto.embeddedId,
-                _id: { $ne: id },
-            });
+    const update = this.omitUndefined({
+      ...dto,
+      applicationId: this.toObjectId(applicationId),
+      rlsTemplateIds: dto.rlsTemplateIds
+        ? this.rlsTemplateService
+            .normalizeIds(dto.rlsTemplateIds)
+            .map((templateId) => this.toObjectId(templateId))
+        : undefined,
+    });
 
-            if (conflict) {
-                throw new ConflictException(
-                    `embeddedId="${dto.embeddedId}" đã được dùng`,
-                );
-            }
-        }
+    const updated = await this.dashboardModel
+      .findByIdAndUpdate(id, { $set: update }, { new: true })
+      .lean();
 
-        if (dto.rls) {
-            this.validateRls(dto.rls);
-            dto.rls = dto.rls.map((r) => ({
-                ...r,
-                clause: this.normalizeClause(r.clause),
-            }));
-        }
-
-        const updated = await this.dashboardModel
-            .findByIdAndUpdate(id, { $set: dto }, { new: true })
-            .lean();
-
-        if (!updated) {
-            throw new NotFoundException(`Dashboard id=${id} không tồn tại`);
-        }
-
-        this.logger.log(`Updated dashboard: ${id}`);
-        return updated;
+    if (!updated) {
+      throw new NotFoundException(`Dashboard id=${id} không tồn tại`);
     }
 
-    async remove(id: string): Promise<void> {
-        const result = await this.dashboardModel.findByIdAndDelete(id);
+    this.logger.log(`Updated dashboard: ${id}`);
+    return updated;
+  }
 
-        if (!result) {
-            throw new NotFoundException(`Dashboard id=${id} không tồn tại`);
-        }
+  async remove(id: string): Promise<void> {
+    const result = await this.dashboardModel.findByIdAndDelete(id);
 
-        this.logger.log(`Deleted dashboard: ${id}`);
+    if (!result) {
+      throw new NotFoundException(`Dashboard id=${id} không tồn tại`);
     }
 
-    async toggleActive(id: string): Promise<SupersetDashboard> {
-        const dashboard = await this.dashboardModel.findById(id);
+    this.logger.log(`Deleted dashboard: ${id}`);
+  }
 
-        if (!dashboard) {
-            throw new NotFoundException(`Dashboard id=${id} không tồn tại`);
-        }
+  async toggleActive(id: string): Promise<SupersetDashboard> {
+    const dashboard = await this.dashboardModel.findById(id);
 
-        dashboard.isActive = !dashboard.isActive;
-        await dashboard.save();
-
-        this.logger.log(
-            `Dashboard id=${id} isActive=${dashboard.isActive}`,
-        );
-
-        return dashboard.toObject();
+    if (!dashboard) {
+      throw new NotFoundException(`Dashboard id=${id} không tồn tại`);
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // RUNTIME RLS INJECTION
-    // ─────────────────────────────────────────────────────────────
+    dashboard.isActive = !dashboard.isActive;
+    await dashboard.save();
 
-    injectRls(
-        rules: RlsRule[],
-        context: Record<string, string>,
-    ): { dataset: number; clause: string }[] {
-        return rules?.map((rule) => {
-            const formatData = {
-                dataset: rule?.dataset,
-                clause: rule?.clause?.replace(/\{\{(\w+)\}\}/g, (_, key) => {
-                    if (!rule?.variables.includes(key)) {
-                        throw new BadRequestException(
-                            `Variable ${key} không được phép`,
-                        );
-                    }
+    this.logger.log(`Dashboard id=${id} isActive=${dashboard.isActive}`);
 
-                    const value = context?.[key] ?? "";
+    return dashboard.toObject();
+  }
 
-                    if (!value) {
-                        throw new BadRequestException(
-                            `Thiếu giá trị cho variable ${key}`,
-                        );
-                    }
+  async getDashboardRlsTemplates(
+    dashboard: SupersetDashboard,
+  ): Promise<RlsTemplate[]> {
+    return this.rlsTemplateService.findByIdsForApplication(
+      dashboard.rlsTemplateIds ?? [],
+      dashboard.applicationId,
+    );
+  }
 
-                    return `'${value?.replace(/'/g, "''")}'`;
-                }),
-            }
-
-            return formatData;
-        });
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // UTILS
-    // ─────────────────────────────────────────────────────────────
-
-    private normalizeClause(clause: string): string {
-        return clause.trim().replace(/\s+/g, ' ');
-    }
+  injectRls(
+    templates: RlsTemplate[],
+    context: Record<string, string>,
+  ): { dataset: number; clause: string }[] {
+    return this.rlsTemplateService.injectRls(templates, context);
+  }
 }

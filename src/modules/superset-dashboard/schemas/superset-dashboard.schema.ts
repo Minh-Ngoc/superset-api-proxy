@@ -1,54 +1,45 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
+import { SupersetApplication } from '../../superset-application/schemas/superset-application.schema';
+import { RlsTemplate } from '../../superset-rls-template/schemas/rls-template.schema';
 
-@Schema({ _id: false })
-export class RlsRule {
-  @Prop({ type: Number, required: true })
-  dataset!: number;
-
-  /**
-   * SQL clause template
-   * Example:
-   * "hierarchy_phone @> ARRAY['{{phone}}']"
-   */
-  @Prop({
-    type: String,
-    required: true,
-    trim: true,
-  })
-  clause!: string;
-
-  /**
-   * Danh sách biến được phép inject
-   * Example: ['phone', 'user_id']
-   */
-  @Prop({ type: [String], default: [] })
-  variables!: string[];
-}
-
-const RlsRuleSchema = SchemaFactory.createForClass(RlsRule);
-
-@Schema({ timestamps: true })
+@Schema({
+  timestamps: true,
+  collection: 'superset_dashboards',
+  versionKey: false,
+})
 export class SupersetDashboard {
   @Prop({ type: String, required: true, trim: true })
   embeddedId!: string;
 
   @Prop({ type: String, required: true, trim: true })
-  name!: string;
+  route!: string;
 
   @Prop({ type: String, required: true, trim: true })
-  path!: string;
+  name!: string;
+
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: SupersetApplication.name,
+    required: true,
+  })
+  applicationId!: Types.ObjectId;
 
   @Prop({ type: Boolean, default: true })
   isActive!: boolean;
 
-  @Prop({ type: [RlsRuleSchema], default: [] })
-  rls!: RlsRule[];
+  @Prop({
+    type: [{ type: MongooseSchema.Types.ObjectId, ref: RlsTemplate.name }],
+    default: [],
+  })
+  rlsTemplateIds!: Types.ObjectId[];
 }
 
-export const SupersetDashboardSchema = SchemaFactory.createForClass(SupersetDashboard);
+export const SupersetDashboardSchema =
+  SchemaFactory.createForClass(SupersetDashboard);
 export type SupersetDashboardDocument = HydratedDocument<SupersetDashboard>;
 
 SupersetDashboardSchema.index({ embeddedId: 1 });
-SupersetDashboardSchema.index({ isActive: 1 });
-SupersetDashboardSchema.index({ 'rls.dataset': 1 });
+SupersetDashboardSchema.index({ applicationId: 1, route: 1 });
+SupersetDashboardSchema.index({ applicationId: 1, isActive: 1 });
+SupersetDashboardSchema.index({ rlsTemplateIds: 1 });

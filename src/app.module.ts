@@ -10,6 +10,8 @@ import { SupersetDashboardModule } from './modules/superset-dashboard/superset-d
 import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './common/guards/jwt.guard';
 import { AuthModule } from './modules/auth/auth.module';
+import { SupersetApplicationModule } from './modules/superset-application/superset-application.module';
+import { SupersetRlsTemplateModule } from './modules/superset-rls-template/superset-rls-template.module';
 
 @Module({
   imports: [
@@ -55,8 +57,12 @@ import { AuthModule } from './modules/auth/auth.module';
             username,
             password,
             onClientCreated(client) {
-              client.on('connect', () => logger.log(`Redis connected: ${host}:${port}`));
-              client.on('error', (err) => logger.error(`Redis error: ${err.message}`));
+              client.on('connect', () =>
+                logger.log(`Redis connected: ${host}:${port}`),
+              );
+              client.on('error', (err) =>
+                logger.error(`Redis error: ${err.message}`),
+              );
             },
           },
         };
@@ -66,6 +72,8 @@ import { AuthModule } from './modules/auth/auth.module';
     SupersetModule,
     RoleModule,
     AccountModule,
+    SupersetApplicationModule,
+    SupersetRlsTemplateModule,
     SupersetDashboardModule,
     AuthModule,
   ],

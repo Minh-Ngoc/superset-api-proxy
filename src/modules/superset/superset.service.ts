@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -40,17 +41,6 @@ export class SupersetService {
     username: '',
     password: '',
   };
-  private PHONE_NUMBER: string = '0909555888';
-  private DATASETS_DASHBOARD: { table_name: string; id: number }[] = [
-    { table_name: 'RLS - 1.1.1 GMV (Day)', id: 37 },
-    { table_name: 'RLS - 1.2.1. Commission (Day)', id: 38 },
-    { table_name: 'RLS - 1.3.1. Services Fee (Day)', id: 39 },
-    { table_name: 'RLS - 2.1', id: 40 },
-    { table_name: 'RLS - 3.1. Agent Performance Detail', id: 41 },
-    { table_name: 'RLS - 4.1. Salesman Performance Detail', id: 42 },
-    { table_name: 'RLS - 5.1. Merchant Onboarding Over Time', id: 43 },
-  ];
-
   constructor(
     private readonly configService: ConfigService,
     private readonly tokenCache: SupersetCacheService,
@@ -60,7 +50,7 @@ export class SupersetService {
     this.salemanAccountSuperset = {
       username: this.configService.getOrThrow('SUPERSET_SALEMAN_USERNAME'),
       password: this.configService.getOrThrow('SUPERSET_SALEMAN_PASSWORD'),
-    }
+    };
 
     this.client = this.createClient();
   }
@@ -76,7 +66,7 @@ export class SupersetService {
       }),
     );
     (client.defaults as any).jar = jar;
-    
+
     return client;
   }
 
@@ -171,7 +161,9 @@ export class SupersetService {
     return response;
   }
 
-  private async fetchCsrfToken(accessToken: string): Promise<{ token: string }> {
+  private async fetchCsrfToken(
+    accessToken: string,
+  ): Promise<{ token: string }> {
     const response = await this.request<any>({
       method: 'GET',
       url: '/security/csrf_token',
@@ -189,7 +181,7 @@ export class SupersetService {
 
   async fetchGuestToken(
     payload: FetchGuestTokenDto,
-    headers: { accessToken: string, csrfToken: string },
+    headers: { accessToken: string; csrfToken: string },
   ): Promise<string> {
     const body = {
       resources: [{ id: payload.embeddedId, type: 'dashboard' }],
@@ -259,7 +251,10 @@ export class SupersetService {
    * Nhờ đó, khi @superset-ui/embedded-sdk gọi refreshGuestToken lần thứ 4
    * (phút 15-20), access token đã được gia hạn sẵn và không bị 401.
    */
-  private async getAccessTokenCached(username: string, password: string): Promise<SupersetTokenCache> {
+  private async getAccessTokenCached(
+    username: string,
+    password: string,
+  ): Promise<SupersetTokenCache> {
     const cached = await this.tokenCache.getAccessTokens(username);
 
     // Case 1: Không có cache → login mới
@@ -274,7 +269,11 @@ export class SupersetService {
       this.logger.log(
         `[Cache] Access token for ${username} near expiry — proactive refresh`,
       );
-      return this.refreshAccessTokenCached(username, cached.refreshToken, password);
+      return this.refreshAccessTokenCached(
+        username,
+        cached.refreshToken,
+        password,
+      );
     }
 
     // Case 3: Cache còn tốt
@@ -309,12 +308,14 @@ export class SupersetService {
 
       const updated: SupersetTokenCache = {
         accessToken: refreshed.access_token,
-        refreshToken,           // refresh token không thay đổi
+        refreshToken, // refresh token không thay đổi
       };
 
       await this.tokenCache.setAccessTokens(username, updated);
 
-      this.logger.log(`[Cache] Access token refreshed and cached for ${username}`);
+      this.logger.log(
+        `[Cache] Access token refreshed and cached for ${username}`,
+      );
       return updated;
     } catch (err: any) {
       this.logger.warn(
@@ -374,13 +375,18 @@ export class SupersetService {
     payload: GetGuestTokenDto,
     phone: string,
   ): Promise<{ token: string }> {
-    // const { embeddedId } = payload;
-    const { path } = payload;
+    const route = payload.route ?? payload.path;
+    if (!route) {
+      throw new BadRequestException('Thiếu route');
+    }
+
     const { username, password } = this.salemanAccountSuperset;
 
     // 1. get dashboard config từ DB
-    // const dashboard = await this.dashboardService.findByEmbeddedId(embeddedId);
-    const dashboard = await this.dashboardService.findByPath(path);
+    const dashboard = await this.dashboardService.findByRoute(
+      route,
+      payload.applicationId,
+    );
 
     // 2. get access token
     const { accessToken } = await this.getAccessTokenCached(username, password);
@@ -389,7 +395,10 @@ export class SupersetService {
     const { token: csrfToken } = await this.fetchCsrfToken(accessToken);
 
     // 4. inject RLS
-    const rlsRules = this.dashboardService.injectRls(dashboard?.rls, {
+    const rlsTemplates =
+      await this.dashboardService.getDashboardRlsTemplates(dashboard);
+
+    const rlsRules = this.dashboardService.injectRls(rlsTemplates, {
       phone,
     });
 
@@ -412,8 +421,12 @@ export class SupersetService {
     access_token: string;
     refresh_token: string;
   }> {
-    const username = this.configService.getOrThrow<string>('SUPERSET_ADMIN_USERNAME');
-    const password = this.configService.getOrThrow<string>('SUPERSET_ADMIN_PASSWORD');
+    const username = this.configService.getOrThrow<string>(
+      'SUPERSET_ADMIN_USERNAME',
+    );
+    const password = this.configService.getOrThrow<string>(
+      'SUPERSET_ADMIN_PASSWORD',
+    );
     return this.fetchAccessToken(username, password);
   }
 
@@ -432,7 +445,9 @@ export class SupersetService {
     });
   }
 
-  async fetchAllDashboards(accessToken: string): Promise<SupersetDashboardListItem[]> {
+  async fetchAllDashboards(
+    accessToken: string,
+  ): Promise<SupersetDashboardListItem[]> {
     const firstPage = await this.fetchDashboardsPage(accessToken, 0);
     const total = firstPage.count;
     const allDashboards: SupersetDashboardListItem[] = [...firstPage.result];
@@ -446,7 +461,9 @@ export class SupersetService {
       for (const page of remaining) allDashboards.push(...page.result);
     }
 
-    this.logger.log(`[Sync] Fetched ${allDashboards.length}/${total} dashboards from Superset`);
+    this.logger.log(
+      `[Sync] Fetched ${allDashboards.length}/${total} dashboards from Superset`,
+    );
     return allDashboards;
   }
 
@@ -490,7 +507,9 @@ export class SupersetService {
       );
     }
 
-    this.logger.log(`[Sync] Embedding enabled: dashboard=${dashboardId}, uuid=${uuid}`);
+    this.logger.log(
+      `[Sync] Embedding enabled: dashboard=${dashboardId}, uuid=${uuid}`,
+    );
     return uuid;
   }
 
@@ -498,11 +517,13 @@ export class SupersetService {
     accessToken: string,
     dashboardId: number,
   ): Promise<number[]> {
-    const response = await this.request<{ result: SupersetDashboardDataset[] }>({
-      method: 'GET',
-      url: `/dashboard/${dashboardId}/datasets`,
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const response = await this.request<{ result: SupersetDashboardDataset[] }>(
+      {
+        method: 'GET',
+        url: `/dashboard/${dashboardId}/datasets`,
+        headers: { Authorization: `Bearer ${accessToken}` },
+      },
+    );
     return (response?.result ?? []).map((ds) => ds.id);
   }
 }

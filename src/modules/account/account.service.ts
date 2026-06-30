@@ -108,6 +108,10 @@ export class AccountService {
     return account;
   }
 
+  async findById(id: string) {
+    return this.accountModel.findById(id);
+  }
+
   async update(username: string, dto: UpdateAccountDto): Promise<Account> {
     const account = await this.accountModel
       .findOneAndUpdate(

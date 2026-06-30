@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -27,12 +28,20 @@ export class SupersetDashboardController {
 
   @Get('embedded')
   getEmbeddedIdByPath(@Query() query: GetEmbeddedIdByPathDto) {
-    return this.dashboardService.getEmbeddedIdByPath(query?.path);
+    const route = query.route ?? query.path;
+    if (!route) {
+      throw new BadRequestException('Thiếu route');
+    }
+
+    return this.dashboardService.getEmbeddedIdByRoute(
+      route,
+      query.applicationId,
+    );
   }
 
   @Get()
-  findAll() {
-    return this.dashboardService.findAll();
+  findAll(@Query('applicationId') applicationId?: string) {
+    return this.dashboardService.findAll(applicationId);
   }
 
   @Get(':id')
